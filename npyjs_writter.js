@@ -1,3 +1,6 @@
+var Promise = require("bluebird");
+
+
 function stringToUint8(str){
 	var result = [];
   for (var i = 0; i < str.length; i++) {
@@ -5,6 +8,7 @@ function stringToUint8(str){
   }
   return ( new Uint8Array(result) );
 }
+
 class MemoryFile{
 	constructor(capacity){
 		this.buffer = new Uint8Array( capacity || 128*1024 )
@@ -21,69 +25,79 @@ class MemoryFile{
 
 		this.buffer.set(data,this.length)
 		this.length += data.length
-		console.log(this.length)
 	}
 
 	set(data,offset,length){
-		this.buffer.set(data,offset,length || data.length);
+		return new Promise((resolve)=>{	
+			this.buffer.set(data,offset,length || data.length);
+			resolve();
+		})
 	}
 
-	writeString(str){
-		  
-		  this.write( stringToUint8(str) );
-	}
-
-	slice(){
-		return this.buffer.slice(0,this.length)
+	get blob(){
+		return new Blob([this.buffer.slice(0,this.length)],{type : 'application/octet-stream'}) 
 	}
 }
 
 class NPYJS_File{
 	// https://docs.scipy.org/doc/numpy-1.13.0/neps/npy-format.html
-	constructor(file,dtype){
+	/**
+	 * 
+	 * @param {*} file output file
+	 * @param {*} dtype nump dtype descr of a record
+	 * @param {*} dsize size of a record
+	 */
+	constructor(file,dtype,dsize){
 		this.file = file
 		this.dtype = dtype
-		this.size = 0;
-
-		//MAGIC 
-		file.write( new Uint8Array([0x93]))
-		file.writeString( "NUMPY" );
-
-		//version
-		file.write( new Uint8Array([1,0]))
-
-		//headerlen
-		this.header_offset = 10;
-		var header = stringToUint8(this.header(3))
-
-		this.header_len = Math.ceil((header.length + 10)/ 16) * 16 - 10;//spec calls for padding. to 16byte alignment
-
-		file.write( new Uint8Array([this.header_len & 0xFF,(this.header_len>>8) & 0xFF ]))
-		for(var i = 0; i < this.header_len; i ++ ){
-			file.writeString(" ")
-		}
-
-
-
-		//data
+		this.dsize = dsize
+		this.count = 0;
+		this.size = 0
 	}
+	
 	header(size){
 		size = size || "placeholder_for_size"
 		var header = "{" + "'descr': " + this.dtype + ", 'fortran_order': False, 'shape': (" +  size + ",), }"  
 		return header;
 	}
 	
-	open(dtype){
+	writeHeader(){
+		//headerlen
+		this.header_offset = 10;
+		var header = stringToUint8(this.header())
+		this.header_len = Math.ceil((header.length + 10)/ 64) * 64 - 10;//spec calls for padding. to 16byte alignment
 
+		var dummyHeader = ""
+		for(var i = 0; i < this.header_len; i ++ ){
+			dummyHeader += " "
+		}
+				
+		//MAGIC
+		var file = this.file 
+		file.write( new Uint8Array([0x93]))
+		file.write( stringToUint8("NUMPY") ) 
+		file.write( new Uint8Array([1,0])) 
+		file.write( new Uint8Array([this.header_len & 0xFF,(this.header_len>>8) & 0xFF ]))
+		file.write( stringToUint8(dummyHeader) )
 	}
 
 	write(record){
-		this.size += 1;
-		this.file.write( new Uint8Array(record.buffer))
+		this.count += 1;
+		this.size += record.length
+
+		if( this.count == 1 ){
+			this.writeHeader()
+			this.file.write( new Uint8Array(record.buffer)) 
+		}else{
+			this.file.write( new Uint8Array(record.buffer))
+		}
 	}
 
 	close(){
-		this.file.set( stringToUint8(this.header(this.size)), this.header_offset );
+		if( this.size % this.dsize != 0){
+			throw "Total size does not divide into the record size"
+		}
+		return this.file.set( stringToUint8(this.header(this.size/this.dsize)), this.header_offset );
 	}
 }
 

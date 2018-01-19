@@ -2,7 +2,9 @@
   "name": "npyjs_writter",
   "version": "1.0.0",
   "main": "npyjs_writter.js",
-  "dependencies": {},
+  "dependencies": {
+    "bluebird": "^3.5.1"
+  },
   "devDependencies": {
     "chai": "^4.1.2",
     "mocha": "^4.0.1"
